@@ -1,0 +1,23 @@
+Source: taptaptap
+Maintainer: Michael Prokop <mika@debian.org>
+Section: python
+Priority: optional
+Build-Depends: debhelper (>= 8~),
+               dh-python,
+               python,
+               python-setuptools
+Standards-Version: 3.9.5
+X-Python-Version: 2.7
+
+Package: python-taptaptap
+Architecture: all
+Depends: python-setuptools,
+         python-yamlish,
+         ${misc:Depends},
+         ${python:Depends}
+Description: Test Anything Protocol handling for cats
+ taptaptap provides parsers, writers and APIs to handle the Test
+ Anything Protocol (TAP). The implementation focuses on the
+ most-current TAP version 13. TAP originates from the Perl community,
+ but is a general format to document runs of testsuites. The reference
+ to cats is just a pun for the noise of cats sneaking on floors.
