@@ -111,10 +111,10 @@ class TapWriter(object):
     def __init__(self):
         self._plan, self.skip = None, None
         self.entries, self.comments = [], []
-        self.version = TapDocument.DEFAULT_VERSION
+        self.version = None
 
     def plan(self, first=None, last=None, skip=u'', tests=None,
-             tapversion=TapDocument.DEFAULT_VERSION):
+             tapversion=None):
         """Define plan. Provide integers `first` and `last` XOR `tests`.
         `skip` is a non-empty message if the whole testsuite was skipped.
         """
@@ -127,6 +127,7 @@ class TapWriter(object):
 
         self.skip = skip
         self.version = tapversion
+
         return self
 
     def testcase(self, ok=True, description=u'', skip=u'', todo=u''):
@@ -151,9 +152,12 @@ class TapWriter(object):
         """Add a failed testcase entry to the TapDocument"""
         return self.testcase(False, description, skip, todo)
 
-    def bailout(self, comment):
+    def bailout(self, comment, data=None):
         """Add Bailout to document"""
-        self.entries.append(TapBailout(comment))
+        bailout = TapBailout(comment)
+        if data:
+            bailout.data = data
+        self.entries.append(bailout)
         return self
 
     def write(self, line):
@@ -163,7 +167,9 @@ class TapWriter(object):
 
     def finalize(self):
         """Finalize this TapDocument"""
-        doc = TapDocument(self.version)
+        doc = TapDocument()
+        if self.version:
+            doc.add_version_line(self.version)
         if self._plan:
             doc.add_plan(self._plan[0], self._plan[1], self.skip)
 
@@ -206,9 +212,10 @@ class TapWriter(object):
         return str(self.doc)
 
 
-def TapCreator(func, **tap_kwargs):
+def TapCreator(func):
     """TAP document decorator.
-    Use it like
+    The wrapped function can optionally accept parameters first, last or tests
+    to specify the number of tests. Use it like
 
         >>> @taptaptap.TapCreator
         >>> def runTests():
@@ -217,7 +224,7 @@ def TapCreator(func, **tap_kwargs):
         >>>            'description': 'E = mc^2', 'skip': 'Still in discussion'}
         >>>     yield {'ok': False, 'description': '2 + 2 = 5',
         >>>            'todo': 'Fix surveillance state'}
-        >>>     raise TapBailout("System failure!")
+        >>>     raise taptaptap.exc.TapBailout("System failure!")
         >>>
         >>> print runTests()
         1..3
@@ -226,26 +233,44 @@ def TapCreator(func, **tap_kwargs):
         not ok 3 - 2 + 2 = 5  # TODO Fix surveillance state
         Bail out! System failure!
     """
-    writer = TapWriter()
-    if ('first' in tap_kwargs and 'last' in tap_kwargs) or \
-       ('tests' in tap_kwargs):
-        writer.plan(**tap_kwargs)
-
     def inner(*args, **kwargs):
+        writer = TapWriter()
         try:
+            count = 0
             for result in func(*args, **kwargs):
                 result['ok']  # required param
+
+                data = result.get('data')
+                if 'data' in result:
+                    del result['data']
+
                 writer.testcase(**result)
+                if data:
+                    for cmt in data:
+                        writer.write(cmt)
+                count += 1
+
         except TapBailout as e:
-            writer.bailout(e.message)
+            writer.bailout(e.message, data=e.data)
+
+        finally:
+            if 'first' in kwargs and 'last' in kwargs:
+                writer.plan(first=int(kwargs['first']),
+                            last=int(kwargs['last']))
+            elif 'tests' in kwargs:
+                writer.plan(tests=int(kwargs['tests']))
+            else:
+                writer.plan(tests=count)
+
         return unicode(writer)
 
     return inner
 
 
-def SimpleTapCreator(func, **tap_kwargs):
+def SimpleTapCreator(func):
     """TAP document decorator.
-    Use it like
+    The wrapped function can optionally accept parameters first, last or tests
+    to specify the number of tests. Use it like
 
         >>> @taptaptap.SimpleTapCreator
         >>> def runTests():
@@ -259,29 +284,51 @@ def SimpleTapCreator(func, **tap_kwargs):
         ok
         not ok
     """
-    version = tap_kwargs.get('version', TapDocument.DEFAULT_VERSION)
-    skip = tap_kwargs.get('skip', False)
-    doc = TapDocument(version=version, skip=skip)
-    plan_added = False
-    skip_comment = tap_kwargs.get('skip_comment', u'')
-
-    if 'first' in tap_kwargs and 'last' in tap_kwargs:
-        doc.add_plan(first=tap_kwargs['first'],
-                     last=tap_kwargs['last'], skip_comment=skip_comment)
-        plan_added = True
 
     def inner(*args, **kwargs):
+        tcs = []
         try:
+            version = kwargs.get('version', TapDocument.DEFAULT_VERSION)
+            skip = kwargs.get('skip', False)
+            doc = TapDocument(version=version, skip=skip)
+
             count = 0
             for result in func(*args, **kwargs):
                 tc = TapTestcase()
                 tc.field = bool(result)
-                doc.add_testcase(tc)
+                tcs.append(tc)
                 count += 1
-            if not plan_added:
-                doc.add_plan(first=1, last=count, skip_comment=skip_comment)
-        except TapBailout:
-            doc.add_bailout()
+
+        except TapBailout as bailout:
+            tcs.append(bailout)
+
+        finally:
+            # retrieve plan
+            metadata = {}
+            if 'skip_comment' in kwargs:
+                metadata['skip_comment'] = kwargs['skip_comment']
+            
+            if 'first' in kwargs and 'last' in kwargs:
+                metadata['first'] = int(kwargs['first'])
+                metadata['last'] = int(kwargs['last'])
+
+            elif 'tests' in kwargs:
+                metadata['first'] = 1
+                metadata['last'] = int(kwargs['tests'])
+
+            else:
+                metadata['first'] = 1
+                metadata['last'] = count
+
+            doc.add_plan(**metadata)
+
+            # retrieve testcases
+            for tc in tcs:
+                if tc.is_testcase:
+                    doc.add_testcase(tc)
+                else:
+                    doc.add_bailout(tc)
+
         return unicode(doc)
 
     return inner
