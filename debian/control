@@ -6,7 +6,7 @@ Build-Depends: debhelper (>= 8~),
                dh-python,
                python,
                python-setuptools
-Standards-Version: 3.9.5
+Standards-Version: 3.9.6
 X-Python-Version: 2.7
 
 Package: python-taptaptap
